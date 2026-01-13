@@ -52,6 +52,108 @@ func GetEnhancedTwoLevelCache() *cache.EnhancedTwoLevelCache {
 // 优先关键词列表
 var priorityKeywords = []string{"合集", "系列", "全", "完", "最新", "附", "complete"}
 
+// 清晰度优先级映射，值越高清晰度越高
+var qualityPriority = map[string]int{
+	"8K":     100,
+	"4K":     90,
+	"2160P":  90,
+	"1080P":  80,
+	"1080I":  75,
+	"720P":   70,
+	"480P":   60,
+	"360P":   50,
+	"240P":   40,
+	"144P":   30,
+	"高清":    80,
+	"超清":    85,
+	"蓝光":    90,
+	"4K蓝光":  95,
+	"1080蓝光": 85,
+	"1080P蓝光": 85,
+}
+
+// extractQuality 从标题中提取清晰度
+func extractQuality(title string) int {
+	title = strings.ToUpper(title)
+	maxQuality := 0
+	
+	for quality, priority := range qualityPriority {
+		if strings.Contains(title, strings.ToUpper(quality)) {
+			if priority > maxQuality {
+				maxQuality = priority
+			}
+		}
+	}
+	
+	return maxQuality
+}
+
+// filterResultsByChannel 按频道过滤结果，每个频道只保留最新的最高清资源
+func filterResultsByChannel(results []model.SearchResult) []model.SearchResult {
+	// 按频道分组
+	channelMap := make(map[string][]model.SearchResult)
+	for _, result := range results {
+		if result.Channel != "" {
+			channelMap[result.Channel] = append(channelMap[result.Channel], result)
+		} else {
+			// 没有频道信息的结果直接保留
+			channelMap["_no_channel_"] = append(channelMap["_no_channel_"], result)
+		}
+	}
+	
+	// 每个频道只保留最新的最高清资源
+	filteredResults := make([]model.SearchResult, 0)
+	for _, channelResults := range channelMap {
+		// 如果只有一个结果，直接保留
+		if len(channelResults) == 1 {
+			filteredResults = append(filteredResults, channelResults[0])
+			continue
+		}
+		
+		// 按时间排序，最新的在前
+		sort.Slice(channelResults, func(i, j int) bool {
+			return channelResults[i].Datetime.After(channelResults[j].Datetime)
+		})
+		
+		// 保留最新的结果
+		latestResults := make([]model.SearchResult, 0)
+		latestTime := channelResults[0].Datetime
+		
+		for _, result := range channelResults {
+			if result.Datetime.Equal(latestTime) {
+				latestResults = append(latestResults, result)
+			}
+		}
+		
+		// 如果只有一个最新结果，直接保留
+		if len(latestResults) == 1 {
+			filteredResults = append(filteredResults, latestResults[0])
+			continue
+		}
+		
+		// 从最新结果中选择最高清的
+		maxQuality := 0
+		var bestResult model.SearchResult
+		
+		for _, result := range latestResults {
+			quality := extractQuality(result.Title)
+			if quality > maxQuality {
+				maxQuality = quality
+				bestResult = result
+			}
+		}
+		
+		// 如果没有提取到清晰度，保留第一个最新结果
+		if maxQuality == 0 {
+			filteredResults = append(filteredResults, latestResults[0])
+		} else {
+			filteredResults = append(filteredResults, bestResult)
+		}
+	}
+	
+	return filteredResults
+}
+
 // extractKeywordFromCacheKey 从缓存键中提取关键词（简化版）
 func extractKeywordFromCacheKey(cacheKey string) string {
 	// 这是一个简化的实现，实际中我们会通过传递来获得关键词
@@ -481,6 +583,14 @@ func (s *SearchService) Search(keyword string, channels []string, concurrency in
 		if !result.Datetime.IsZero() || getKeywordPriority(result.Title) > 0 || pluginLevel <= 2 {
 			filteredForResults = append(filteredForResults, result)
 		}
+	}
+	
+	// 按频道过滤结果，每个频道只保留最新的最高清资源
+	filteredForResults = filterResultsByChannel(filteredForResults)
+
+	// 重构标题：将搜索关键词和更新集数放到标题前面
+	for i := range filteredForResults {
+		filteredForResults[i].Title = reconstructTitle(filteredForResults[i].Title, keyword)
 	}
 
 	// 合并链接按网盘类型分组（使用所有过滤后的结果）
@@ -977,6 +1087,45 @@ func cleanTitle(title string) string {
 	title = emojiRegex.ReplaceAllString(title, "")
 	
 	return strings.TrimSpace(title)
+}
+
+// 重构标题：将搜索关键词和更新集数放到标题前面
+func reconstructTitle(title, keyword string) string {
+	// 如果标题或关键词为空，直接返回原标题
+	if title == "" || keyword == "" {
+		return title
+	}
+	
+	// 提取更新集数信息，如"更新至12集"、"更至第3集"、"已更10集"等
+	updatePattern := regexp.MustCompile(`(更[新至]*[第]?\d+集|已更\d+集|更新\d+集)`)
+	updateMatch := updatePattern.FindString(title)
+	
+	// 移除标题中的更新集数信息
+	processedTitle := updatePattern.ReplaceAllString(title, "")
+	processedTitle = strings.TrimSpace(processedTitle)
+	
+	// 移除标题中的搜索关键词（如果存在），避免重复
+	keywordPattern := regexp.MustCompile(`(?i)` + regexp.QuoteMeta(keyword))
+	processedTitle = keywordPattern.ReplaceAllString(processedTitle, "")
+	processedTitle = strings.TrimSpace(processedTitle)
+	
+	// 构建新标题
+	var newTitle string
+	
+	// 先添加搜索关键词
+	newTitle += keyword
+	
+	// 如果有更新集数，添加到关键词后面
+	if updateMatch != "" {
+		newTitle += " " + updateMatch
+	}
+	
+	// 如果还有剩余标题内容，添加到后面
+	if processedTitle != "" {
+		newTitle += " " + processedTitle
+	}
+	
+	return newTitle
 }
 
 // 判断一行是否为空或只包含空白字符
