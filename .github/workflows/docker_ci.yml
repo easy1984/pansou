@@ -38,7 +38,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.repository_owner }}
-          password: ${{ secrets.DOCKER }} 
+          password: ${{ secrets.GITHUB_TOKEN }} 
 
       - name: 提取Docker元数据
         id: meta
