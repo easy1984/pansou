@@ -19,7 +19,7 @@ PanSou是一个高性能的网盘资源搜索API服务，支持TG搜索和自定
 #### 直接使用Docker命令
 
 ```bash
-docker run -d --name pansou -p 9999:8888 ghcr.io/easy1984/pansou:latest
+docker run -d --name pansoupro -p 8888:8888 ghcr.io/easy1984/pansou:latest
 ```
 
 #### 使用Docker Compose
