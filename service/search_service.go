@@ -1018,17 +1018,17 @@ func generateResultNoteInfo(result model.SearchResult, source string, keyword st
 
 	// 添加排名
 	if rank > 0 {
-		parts = append(parts, fmt.Sprintf("排名:%03d", rank))
+		parts = append(parts, fmt.Sprintf("%03d", rank))
 	}
 
 	// 添加来源
 	if sourceName != "" {
-		parts = append(parts, fmt.Sprintf("来源:%s", sourceName))
+		parts = append(parts, sourceName)
 	}
 
 	// 添加得分
 	if totalScore > 0 {
-		parts = append(parts, fmt.Sprintf("得分:%.0f", totalScore))
+		parts = append(parts, fmt.Sprintf("%.0f", totalScore))
 	}
 
 	// 如果没有任何信息，返回空字符串
@@ -1036,8 +1036,8 @@ func generateResultNoteInfo(result model.SearchResult, source string, keyword st
 		return ""
 	}
 
-	// 返回备注信息
-	return fmt.Sprintf("名称：[%s]", strings.Join(parts, "|"))
+	// 返回备注信息，格式：001 panta 1710
+	return strings.Join(parts, " ")
 }
 
 // 将搜索结果按网盘类型分组
@@ -1179,18 +1179,11 @@ func mergeResultsByType(results []model.SearchResult, keyword string, cloudTypes
 				linkDatetime = link.Datetime
 			}
 
-			// 生成备注信息：插件名称、等级、得分等
-			noteInfo := generateResultNoteInfo(result, source, keyword, 0)
-
-			// 在标题后面添加备注信息
-			if noteInfo != "" {
-				title = fmt.Sprintf("%s %s", title, noteInfo)
-			}
-
+			// 直接使用result.Title中已经包含的排名和备注信息
 			mergedLink := model.MergedLink{
 				URL:      link.URL,
 				Password: link.Password,
-				Note:     title, // 使用带备注的标题
+				Note:     result.Title, // 直接使用带排名和备注的标题
 				Datetime: linkDatetime,
 				Source:   source,        // 添加数据来源字段
 				Images:   result.Images, // 添加TG消息中的图片链接
