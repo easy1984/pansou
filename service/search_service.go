@@ -477,20 +477,13 @@ func (s *SearchService) Search(keyword string, channels []string, concurrency in
 	for i := range allResults {
 		source := getResultSource(allResults[i])
 
-		// 计算综合得分
-		timeScore := calculateTimeScore(allResults[i].Datetime)
-		keywordScore := getKeywordPriority(allResults[i].Title)
-		pluginScore := getPluginLevelScore(source)
-		totalScore := timeScore + float64(keywordScore) + float64(pluginScore)
-
-		// 生成排名前缀（001, 002, 003...）
-		rankPrefix := fmt.Sprintf("名称:%03d", i+1)
-
 		// 生成备注信息
-		noteInfo := fmt.Sprintf("%s|综合:%.0f", rankPrefix, totalScore)
+		noteInfo := generateResultNoteInfo(allResults[i], source, keyword, i+1)
 
-		// 在标题后面添加排名和备注信息
-		allResults[i].Title = fmt.Sprintf("%s [%s]", allResults[i].Title, noteInfo)
+		// 在标题前面添加排名和备注信息
+		if noteInfo != "" {
+			allResults[i].Title = fmt.Sprintf("%s%s", noteInfo, allResults[i].Title)
+		}
 	}
 
 	// 过滤结果，只保留有时间的结果或包含优先关键词的结果或高等级插件结果到Results中
@@ -1003,7 +996,7 @@ func isEmpty(line string) bool {
 }
 
 // generateResultNoteInfo 生成结果备注信息
-func generateResultNoteInfo(result model.SearchResult, source string, keyword string) string {
+func generateResultNoteInfo(result model.SearchResult, source string, keyword string, rank int) string {
 	var parts []string
 
 	// 获取来源名称
@@ -1017,20 +1010,25 @@ func generateResultNoteInfo(result model.SearchResult, source string, keyword st
 		sourceName = "unknown"
 	}
 
-	// 添加来源名称
-	if sourceName != "" {
-		parts = append(parts, fmt.Sprintf("来源:%s", sourceName))
-	}
-
 	// 计算综合得分
 	timeScore := calculateTimeScore(result.Datetime)
 	keywordScore := getKeywordPriority(result.Title)
 	pluginScore := getPluginLevelScore(source)
 	totalScore := timeScore + float64(keywordScore) + float64(pluginScore)
 
-	// 添加综合得分
+	// 添加排名
+	if rank > 0 {
+		parts = append(parts, fmt.Sprintf("排名:%03d", rank))
+	}
+
+	// 添加来源
+	if sourceName != "" {
+		parts = append(parts, fmt.Sprintf("来源:%s", sourceName))
+	}
+
+	// 添加得分
 	if totalScore > 0 {
-		parts = append(parts, fmt.Sprintf("综合:%.0f", totalScore))
+		parts = append(parts, fmt.Sprintf("得分:%.0f", totalScore))
 	}
 
 	// 如果没有任何信息，返回空字符串
@@ -1039,7 +1037,7 @@ func generateResultNoteInfo(result model.SearchResult, source string, keyword st
 	}
 
 	// 返回备注信息
-	return strings.Join(parts, "|")
+	return fmt.Sprintf("名称：[%s]", strings.Join(parts, "|"))
 }
 
 // 将搜索结果按网盘类型分组
