@@ -1180,11 +1180,11 @@ func mergeResultsByType(results []model.SearchResult, keyword string, cloudTypes
 			}
 
 			// 生成备注信息：插件名称、等级、得分等
-			noteInfo := generateResultNoteInfo(result, source, keyword)
+			noteInfo := generateResultNoteInfo(result, source, keyword, 0)
 
 			// 在标题后面添加备注信息
 			if noteInfo != "" {
-				title = fmt.Sprintf("%s [%s]", title, noteInfo)
+				title = fmt.Sprintf("%s %s", title, noteInfo)
 			}
 
 			mergedLink := model.MergedLink{
