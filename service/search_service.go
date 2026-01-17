@@ -473,13 +473,24 @@ func (s *SearchService) Search(keyword string, channels []string, concurrency in
 	// 按照优化后的规则排序结果
 	sortResultsByTimeAndKeywords(allResults)
 
-	// 为所有结果添加备注信息
+	// 为所有结果添加排名前缀和备注信息
 	for i := range allResults {
 		source := getResultSource(allResults[i])
-		noteInfo := generateResultNoteInfo(allResults[i], source, keyword)
-		if noteInfo != "" {
-			allResults[i].Title = fmt.Sprintf("%s [%s]", allResults[i].Title, noteInfo)
-		}
+
+		// 计算综合得分
+		timeScore := calculateTimeScore(allResults[i].Datetime)
+		keywordScore := getKeywordPriority(allResults[i].Title)
+		pluginScore := getPluginLevelScore(source)
+		totalScore := timeScore + float64(keywordScore) + float64(pluginScore)
+
+		// 生成排名前缀（001, 002, 003...）
+		rankPrefix := fmt.Sprintf("名称:%03d", i+1)
+
+		// 生成备注信息
+		noteInfo := fmt.Sprintf("%s|综合:%.0f", rankPrefix, totalScore)
+
+		// 在标题后面添加排名和备注信息
+		allResults[i].Title = fmt.Sprintf("%s [%s]", allResults[i].Title, noteInfo)
 	}
 
 	// 过滤结果，只保留有时间的结果或包含优先关键词的结果或高等级插件结果到Results中
@@ -995,51 +1006,27 @@ func isEmpty(line string) bool {
 func generateResultNoteInfo(result model.SearchResult, source string, keyword string) string {
 	var parts []string
 
-	// 获取插件名称和等级
-	var pluginName string
-	var pluginLevel int
+	// 获取来源名称
+	var sourceName string
 
 	if strings.HasPrefix(source, "plugin:") {
-		pluginName = strings.TrimPrefix(source, "plugin:")
-		pluginLevel = getPluginLevelBySource(source)
+		sourceName = strings.TrimPrefix(source, "plugin:")
 	} else if strings.HasPrefix(source, "tg:") {
-		pluginName = "TG"
-		pluginLevel = 3
+		sourceName = strings.TrimPrefix(source, "tg:")
 	} else {
-		pluginName = "unknown"
-		pluginLevel = 3
+		sourceName = "unknown"
 	}
 
-	// 添加插件名称
-	if pluginName != "" {
-		parts = append(parts, fmt.Sprintf("插件:%s", pluginName))
+	// 添加来源名称
+	if sourceName != "" {
+		parts = append(parts, fmt.Sprintf("来源:%s", sourceName))
 	}
 
-	// 添加插件等级
-	if pluginLevel > 0 {
-		parts = append(parts, fmt.Sprintf("等级%d", pluginLevel))
-	}
-
-	// 计算各项得分
+	// 计算综合得分
 	timeScore := calculateTimeScore(result.Datetime)
 	keywordScore := getKeywordPriority(result.Title)
 	pluginScore := getPluginLevelScore(source)
 	totalScore := timeScore + float64(keywordScore) + float64(pluginScore)
-
-	// 添加时间得分
-	if timeScore > 0 {
-		parts = append(parts, fmt.Sprintf("时间:%.0f", timeScore))
-	}
-
-	// 添加关键词得分
-	if keywordScore > 0 {
-		parts = append(parts, fmt.Sprintf("关键词:%d", keywordScore))
-	}
-
-	// 添加插件得分
-	if pluginScore != 0 {
-		parts = append(parts, fmt.Sprintf("插件:%d", pluginScore))
-	}
 
 	// 添加综合得分
 	if totalScore > 0 {
