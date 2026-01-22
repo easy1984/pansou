@@ -1,6 +1,8 @@
 module pansou
 
-go 1.22.0
+go 1.24.0
+
+toolchain go1.24.0
 
 require (
 	github.com/Advik-B/cloudscraper v0.0.0-20250623142001-d5e0e43555db
