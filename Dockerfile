@@ -9,11 +9,16 @@ RUN apk add --no-cache git ca-certificates tzdata
 # 设置工作目录
 WORKDIR /app
 
+# 设置 Go 代理以加速依赖下载
+ENV GOPROXY=https://goproxy.cn,direct \
+    GOSUMDB=sum.golang.google.cn \
+    GO111MODULE=on
+
 # 复制依赖文件
 COPY go.mod go.sum ./
 
-# 下载依赖
-RUN go mod download
+# 下载依赖（添加详细输出以便调试）
+RUN go mod download -x
 
 # 复制源代码
 COPY . .
@@ -28,7 +33,7 @@ ARG TARGETARCH
 
 # 构建应用
 # Go 语言原生支持交叉编译，这里会根据传入的 TARGETARCH 编译出对应平台的可执行文件
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags="-s -w -extldflags '-static'" -o pansou .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -v -ldflags="-s -w -extldflags '-static'" -o pansou .
 
 # 运行阶段
 # 这一阶段会根据 buildx 的 --platform 参数选择正确的基础镜像 (例如 linux/arm64 会拉取 arm64/alpine)
