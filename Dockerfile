@@ -12,7 +12,8 @@ WORKDIR /app
 # 设置 Go 代理以加速依赖下载
 ENV GOPROXY=https://goproxy.cn,direct \
     GOSUMDB=sum.golang.google.cn \
-    GO111MODULE=on
+    GO111MODULE=on \
+    GOTOOLCHAIN=auto
 
 # 复制依赖文件
 COPY go.mod go.sum ./
