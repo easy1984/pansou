@@ -19,18 +19,18 @@ RUN go mod download && go mod verify
 COPY . .
 
 # 确保 service 包的文件声明正确
-RUN echo "=== Fixing package declarations ===" && \
-    (head -n +2 service/search_service.go > /tmp/search_service.go.tmp) && \
-    printf "package service\n" > service/search_service.go && \
-    cat /tmp/search_service.go.tmp >> service/search_service.go && \
-    (head -n +2 service/cache_integration.go > /tmp/cache_integration.go.tmp) && \
-    printf "package service\n" > service/cache_integration.go && \
-    cat /tmp/cache_integration.go.tmp >> service/cache_integration.go && \
-    echo "search_service.go first line:" && \
-    head -n 1 service/search_service.go && \
-    echo "cache_integration.go first line:" && \
-    head -n 1 service/cache_integration.go && \
-    echo "=== Package fix complete ==="
+RUN echo "=== Fixing package declarations ==="
+RUN head -n +2 service/search_service.go > /tmp/search_service.go.tmp
+RUN printf "package service\n" > service/search_service.go
+RUN cat /tmp/search_service.go.tmp >> service/search_service.go
+RUN head -n +2 service/cache_integration.go > /tmp/cache_integration.go.tmp
+RUN printf "package service\n" > service/cache_integration.go
+RUN cat /tmp/cache_integration.go.tmp >> service/cache_integration.go
+RUN echo "search_service.go first line:"
+RUN head -n 1 service/search_service.go
+RUN echo "cache_integration.go first line:"
+RUN head -n 1 service/cache_integration.go
+RUN echo "=== Package fix complete ==="
 
 # 构建参数
 ARG VERSION=dev
