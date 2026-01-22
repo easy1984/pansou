@@ -1,7 +1,7 @@
 # 构建阶段
 # 使用 --platform=$BUILDPLATFORM 确保构建器始终在运行 Actions 的机器的原生架构上运行 (通常是 linux/amd64)
 # $BUILDPLATFORM 是 buildx 自动提供的变量
-FROM --platform=$BUILDPLATFORM golang:alpine AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24-alpine AS builder
 
 # 安装构建依赖
 RUN apk add --no-cache git ca-certificates tzdata
@@ -13,24 +13,10 @@ WORKDIR /app
 COPY go.mod go.sum ./
 
 # 下载依赖
-RUN go mod download && go mod verify
+RUN go mod download
 
 # 复制源代码
 COPY . .
-
-# 确保 service 包的文件声明正确
-RUN echo "=== Fixing package declarations ==="
-RUN head -n +2 service/search_service.go > /tmp/search_service.go.tmp
-RUN printf "package service\n" > service/search_service.go
-RUN cat /tmp/search_service.go.tmp >> service/search_service.go
-RUN head -n +2 service/cache_integration.go > /tmp/cache_integration.go.tmp
-RUN printf "package service\n" > service/cache_integration.go
-RUN cat /tmp/cache_integration.go.tmp >> service/cache_integration.go
-RUN echo "search_service.go first line:"
-RUN head -n 1 service/search_service.go
-RUN echo "cache_integration.go first line:"
-RUN head -n 1 service/cache_integration.go
-RUN echo "=== Package fix complete ==="
 
 # 构建参数
 ARG VERSION=dev
@@ -42,15 +28,7 @@ ARG TARGETARCH
 
 # 构建应用
 # Go 语言原生支持交叉编译，这里会根据传入的 TARGETARCH 编译出对应平台的可执行文件
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -v -ldflags="-s -w -extldflags '-static'" -o pansou . 2>&1 || \
-    (echo "=== Build failed ===" && \
-    echo "Checking service package:" && \
-    head -n 1 service/search_service.go && \
-    head -n 1 service/cache_integration.go && \
-    echo "Listing service directory:" && \
-    ls -la service/ && \
-    echo "=== End of error info ===" && \
-    exit 1)
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=${TARGETARCH} go build -ldflags="-s -w -extldflags '-static'" -o pansou .
 
 # 运行阶段
 # 这一阶段会根据 buildx 的 --platform 参数选择正确的基础镜像 (例如 linux/arm64 会拉取 arm64/alpine)
