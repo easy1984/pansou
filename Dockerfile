@@ -18,6 +18,9 @@ RUN go mod download && go mod verify
 # 复制源代码
 COPY . .
 
+# 确保文件编码正确（移除可能的 BOM）
+RUN sed -i '1s/^\xEF\xBB\xBF//' service/search_service.go || true
+
 # 构建参数
 ARG VERSION=dev
 ARG BUILD_DATE=unknown
