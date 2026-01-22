@@ -18,8 +18,17 @@ RUN go mod download && go mod verify
 # 复制源代码
 COPY . .
 
-# 确保文件编码正确（移除可能的 BOM）
-RUN sed -i '1s/^\xEF\xBB\xBF//' service/search_service.go || true
+# 确保 service 包的文件声明正确
+RUN echo "=== Checking package declarations ===" && \
+    echo "search_service.go first line:" && \
+    head -n 1 service/search_service.go && \
+    echo "cache_integration.go first line:" && \
+    head -n 1 service/cache_integration.go && \
+    echo "=== End of package check ===" && \
+    head -n 1 service/search_service.go | grep -q "^package service" || \
+    (printf "package service\n" > service/search_service.go.tmp && \
+    tail -n +2 service/search_service.go >> service/search_service.go.tmp && \
+    mv service/search_service.go.tmp service/search_service.go)
 
 # 构建参数
 ARG VERSION=dev
