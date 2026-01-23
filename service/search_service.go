@@ -49,11 +49,8 @@ func GetEnhancedTwoLevelCache() *cache.EnhancedTwoLevelCache {
 	return enhancedTwoLevelCache
 }
 
-// 优先关键词列表（用于识别优质资源）
+// 优先关键词列表
 var priorityKeywords = []string{"合集", "系列", "全", "完", "最新", "附", "complete"}
-
-// 高清质量关键词列表（用于识别高清资源）
-var qualityKeywords = []string{"4K", "1080P", "2160P", "720P", "高清", "HD", "蓝光", "Blu-ray", "REMUX", "HEVC", "HDR", "杜比", "Dolby", "DTS", "TrueHD"}
 
 // extractKeywordFromCacheKey 从缓存键中提取关键词（简化版）
 func extractKeywordFromCacheKey(cacheKey string) string {
@@ -473,8 +470,8 @@ func (s *SearchService) Search(keyword string, channels []string, concurrency in
 	// 合并结果
 	allResults := mergeSearchResults(tgResults, pluginResults)
 
-	// 按照优化后的规则排序结果
-	sortResultsByTimeAndKeywords(allResults)
+	// 按照优化后的规则排序结果，并获取排名和总分映射
+	rankMap := sortResultsByTimeAndKeywords(allResults)
 
 	// 过滤结果，只保留有时间的结果或包含优先关键词的结果或高等级插件结果到Results中
 	filteredForResults := make([]model.SearchResult, 0, len(allResults))
@@ -488,23 +485,8 @@ func (s *SearchService) Search(keyword string, channels []string, concurrency in
 		}
 	}
 
-	// 根据resultType选择不同的处理方式
-	if resultType == "tvbox" {
-		// alist-tvbox 兼容模式：生成扁平化的链接列表
-		tvBoxLinks := mergeResultsForTVBox(allResults, keyword, cloudTypes)
-
-		// 返回SearchResponse，包含TVBoxData
-		return model.SearchResponse{
-			Total: len(tvBoxLinks),
-			TVBoxData: &model.TVBoxCompatibleResponseData{
-				Total:   len(tvBoxLinks),
-				Results: tvBoxLinks,
-			},
-		}, nil
-	}
-
-	// 原有逻辑：合并链接按网盘类型分组（使用所有过滤后的结果）
-	mergedLinks := mergeResultsByType(allResults, keyword, cloudTypes)
+	// 合并链接按网盘类型分组（使用所有过滤后的结果），并传递排名和总分映射
+	mergedLinks := mergeResultsByType(allResults, keyword, cloudTypes, rankMap)
 
 	// 构建响应
 	var total int
@@ -539,9 +521,6 @@ func filterResponseByType(response model.SearchResponse, resultType string) mode
 			MergedByType: response.MergedByType,
 			Results:      nil,
 		}
-	case "tvbox":
-		// 返回TVBox兼容格式（通过Data字段）
-		return response
 	case "all":
 		return response
 	case "results":
@@ -551,7 +530,8 @@ func filterResponseByType(response model.SearchResponse, resultType string) mode
 			Results: response.Results,
 		}
 	default:
-		// 默认返回MergedByType
+		// // 默认返回全部
+		// return response
 		return model.SearchResponse{
 			Total:        response.Total,
 			MergedByType: response.MergedByType,
@@ -561,7 +541,14 @@ func filterResponseByType(response model.SearchResponse, resultType string) mode
 }
 
 // 根据时间和关键词排序结果
-func sortResultsByTimeAndKeywords(results []model.SearchResult) {
+// ResultRankInfo 结果排名和总分信息
+type ResultRankInfo struct {
+	Rank       int     // 排名
+	TotalScore float64 // 总分
+}
+
+// sortResultsByTimeAndKeywords 根据时间和关键词排序结果，并返回排名和总分映射
+func sortResultsByTimeAndKeywords(results []model.SearchResult) map[string]ResultRankInfo {
 	// 1. 计算每个结果的综合得分
 	scores := make([]ResultScore, len(results))
 
@@ -569,34 +556,36 @@ func sortResultsByTimeAndKeywords(results []model.SearchResult) {
 		source := getResultSource(result)
 
 		scores[i] = ResultScore{
-			Result:        result,
-			TimeScore:     calculateTimeScore(result.Datetime),
-			KeywordScore:  getKeywordPriority(result.Title),
-			PluginScore:   getPluginLevelScore(source),
-			QualityScore:  calculateQualityScore(result.Title, result.Content),
-			PasswordScore: calculatePasswordScore(extractPasswordFromLinks(result.Links)),
-			TotalScore:    0, // 稍后计算
-			Index:         0, // 稍后设置
+			Result:       result,
+			TimeScore:    calculateTimeScore(result.Datetime),
+			KeywordScore: getKeywordPriority(result.Title),
+			PluginScore:  getPluginLevelScore(source),
+			TotalScore:   0, // 稍后计算
 		}
 
-		// 计算综合得分（时间 + 关键词 + 插件等级 + 高清质量 + 提取码）
+		// 计算综合得分
 		scores[i].TotalScore = scores[i].TimeScore +
 			float64(scores[i].KeywordScore) +
-			float64(scores[i].PluginScore) +
-			scores[i].QualityScore +
-			float64(scores[i].PasswordScore)
+			float64(scores[i].PluginScore)
 	}
 
-	// 2. 按综合得分从高到低排序
+	// 2. 按综合得分排序
 	sort.Slice(scores, func(i, j int) bool {
 		return scores[i].TotalScore > scores[j].TotalScore
 	})
 
-	// 3. 更新原数组并设置序号
+	// 3. 更新原数组并创建排名映射
+	rankMap := make(map[string]ResultRankInfo)
 	for i, score := range scores {
 		results[i] = score.Result
-		scores[i].Index = i + 1 // 序号从0001开始
+		// 保存排名（从1开始）和总分
+		rankMap[score.Result.UniqueID] = ResultRankInfo{
+			Rank:       i + 1,
+			TotalScore: score.TotalScore,
+		}
 	}
+
+	return rankMap
 }
 
 // 获取标题中包含优先关键词的优先级
@@ -1008,72 +997,17 @@ func isEmpty(line string) bool {
 	return strings.TrimSpace(line) == ""
 }
 
-// generateResultNoteInfo 生成结果备注信息
-func generateResultNoteInfo(result model.SearchResult, source string, keyword string) string {
-	var parts []string
-
-	// 获取插件名称和等级
-	var pluginName string
-	var pluginLevel int
-
-	if strings.HasPrefix(source, "plugin:") {
-		pluginName = strings.TrimPrefix(source, "plugin:")
-		pluginLevel = getPluginLevelBySource(source)
-	} else if strings.HasPrefix(source, "tg:") {
-		pluginName = "TG"
-		pluginLevel = 3
-	} else {
-		pluginName = "unknown"
-		pluginLevel = 3
+// extractSourceName 从来源字符串中提取实际的频道名或插件名
+func extractSourceName(source string) string {
+	parts := strings.Split(source, ":")
+	if len(parts) >= 2 {
+		return parts[1] // 返回冒号后的实际名称
 	}
-
-	// 添加插件名称
-	if pluginName != "" {
-		parts = append(parts, fmt.Sprintf("插件:%s", pluginName))
-	}
-
-	// 添加插件等级
-	if pluginLevel > 0 {
-		parts = append(parts, fmt.Sprintf("等级%d", pluginLevel))
-	}
-
-	// 计算各项得分
-	timeScore := calculateTimeScore(result.Datetime)
-	keywordScore := getKeywordPriority(result.Title)
-	pluginScore := getPluginLevelScore(source)
-	totalScore := timeScore + float64(keywordScore) + float64(pluginScore)
-
-	// 添加时间得分
-	if timeScore > 0 {
-		parts = append(parts, fmt.Sprintf("时间:%.0f", timeScore))
-	}
-
-	// 添加关键词得分
-	if keywordScore > 0 {
-		parts = append(parts, fmt.Sprintf("关键词:%d", keywordScore))
-	}
-
-	// 添加插件得分
-	if pluginScore != 0 {
-		parts = append(parts, fmt.Sprintf("插件:%d", pluginScore))
-	}
-
-	// 添加综合得分
-	if totalScore > 0 {
-		parts = append(parts, fmt.Sprintf("综合:%.0f", totalScore))
-	}
-
-	// 如果没有任何信息，返回空字符串
-	if len(parts) == 0 {
-		return ""
-	}
-
-	// 返回备注信息
-	return strings.Join(parts, "|")
+	return source // 回退，返回原始字符串
 }
 
-// 将搜索结果按网盘类型分组
-func mergeResultsByType(results []model.SearchResult, keyword string, cloudTypes []string) model.MergedLinks {
+// 将搜索结果按网盘类型分组，并在标题前添加排名、总分和来源
+func mergeResultsByType(results []model.SearchResult, keyword string, cloudTypes []string, rankMap map[string]ResultRankInfo) model.MergedLinks {
 	// 创建合并结果的映射
 	mergedLinks := make(model.MergedLinks, 12) // 预分配容量，假设有12种不同的网盘类型
 
@@ -1211,18 +1145,25 @@ func mergeResultsByType(results []model.SearchResult, keyword string, cloudTypes
 				linkDatetime = link.Datetime
 			}
 
-			// 生成备注信息：插件名称、等级、得分等
-			noteInfo := generateResultNoteInfo(result, source, keyword)
-
-			// 在标题后面添加备注信息
-			if noteInfo != "" {
-				title = fmt.Sprintf("%s [%s]", title, noteInfo)
+			// 获取排名和总分信息
+			rankInfo, hasRank := rankMap[result.UniqueID]
+			rank := 0
+			totalScore := 0.0
+			if hasRank {
+				rank = rankInfo.Rank
+				totalScore = rankInfo.TotalScore
 			}
+
+			// 提取实际的来源名称（频道名或插件名）
+			sourceName := extractSourceName(source)
+
+			// 生成带排名、总分和来源的格式化标题
+			formattedTitle := fmt.Sprintf("%04d | %.0f | %s | %s", rank, totalScore, sourceName, title)
 
 			mergedLink := model.MergedLink{
 				URL:      link.URL,
 				Password: link.Password,
-				Note:     title, // 使用带备注的标题
+				Note:     formattedTitle, // 使用格式化后的标题
 				Datetime: linkDatetime,
 				Source:   source,        // 添加数据来源字段
 				Images:   result.Images, // 添加TG消息中的图片链接
@@ -1300,271 +1241,6 @@ func mergeResultsByType(results []model.SearchResult, keyword string, cloudTypes
 	}
 
 	return mergedLinks
-}
-
-// extractCleanTitle 提取简洁的标题，只移除括号内的类型信息
-func extractCleanTitle(title string) string {
-	// 移除括号内的类型信息（如 "【电影】"）
-	title = regexp.MustCompile(`【[^】]+】`).ReplaceAllString(title, "")
-
-	// 移除括号内的类型信息（英文版）
-	title = regexp.MustCompile(`\[[^\]]+\]`).ReplaceAllString(title, "")
-
-	// 移除多余空格
-	title = strings.TrimSpace(title)
-
-	return title
-}
-
-// generateCompactNote 生成简洁的备注信息
-func generateCompactNote(source string, pluginLevel int) string {
-	var parts []string
-
-	// 添加插件名称
-	if strings.HasPrefix(source, "plugin:") {
-		pluginName := strings.TrimPrefix(source, "plugin:")
-		parts = append(parts, pluginName)
-	} else if strings.HasPrefix(source, "tg:") {
-		channelName := strings.TrimPrefix(source, "tg:")
-		parts = append(parts, channelName)
-	}
-
-	// 添加等级信息（仅对插件）
-	if strings.HasPrefix(source, "plugin:") && pluginLevel > 0 {
-		parts = append(parts, fmt.Sprintf("L%d", pluginLevel))
-	}
-
-	if len(parts) == 0 {
-		return ""
-	}
-
-	return strings.Join(parts, "|")
-}
-
-// convertLinkTypeToCode 将网盘类型转换为数字编码（alist-tvbox 兼容）
-func convertLinkTypeToCode(linkType string) string {
-	switch strings.ToLower(linkType) {
-	case "aliyun", "alipan":
-		return "0"
-	case "pikpak":
-		return "1"
-	case "xunlei":
-		return "2"
-	case "123":
-		return "3"
-	case "quark":
-		return "5"
-	case "mobile", "139":
-		return "6"
-	case "uc":
-		return "7"
-	case "115":
-		return "8"
-	case "tianyi", "189":
-		return "9"
-	case "baidu":
-		return "10"
-	default:
-		return ""
-	}
-}
-
-// mergeResultsForTVBox 生成 alist-tvbox 兼容的链接列表
-func mergeResultsForTVBox(results []model.SearchResult, keyword string, cloudTypes []string) []model.TVBoxCompatibleLink {
-	// 用于去重的映射，键为URL
-	uniqueLinks := make(map[string]model.TVBoxCompatibleLink)
-	lowerKeyword := strings.ToLower(keyword)
-
-	// 用于生成序号的计数器
-	linkIndex := 0
-
-	// 遍历所有搜索结果
-	for _, result := range results {
-		// 提取消息中的链接-标题对应关系
-		linkTitleMap := extractLinkTitlePairs(result.Content)
-
-		// 如果没有从内容中提取到标题，尝试直接从内容中匹配
-		if len(linkTitleMap) == 0 && len(result.Links) > 0 && !strings.Contains(result.Content, "\n") {
-			content := result.Content
-
-			// 支持多种网盘链接前缀
-			linkPrefixes := []string{"天翼链接：", "百度链接：", "夸克链接：", "阿里链接：", "UC链接：", "115链接：", "迅雷链接：", "123链接：", "链接："}
-
-			var parts []string
-
-			// 尝试找到匹配的前缀
-			for _, prefix := range linkPrefixes {
-				if strings.Contains(content, prefix) {
-					parts = strings.Split(content, prefix)
-					break
-				}
-			}
-
-			// 如果找到了匹配的前缀并且分割成功
-			if len(parts) > 1 && len(result.Links) <= len(parts)-1 {
-				// 第一部分是第一个标题
-				titles := make([]string, 0, len(parts))
-				titles = append(titles, cleanTitle(parts[0]))
-
-				// 处理每个包含链接的部分，提取标题
-				for i := 1; i < len(parts)-1; i++ {
-					part := parts[i]
-					// 找到链接的结束位置
-					linkEnd := -1
-					for j, c := range part {
-						if c == ' ' || c == '窃' || c == '东' || c == '迎' || c == '千' || c == '我' || c == '恋' || c == '将' || c == '野' ||
-							c == '合' || c == '集' || c == '天' || c == '翼' || c == '网' || c == '盘' || c == '(' || c == '（' {
-							linkEnd = j
-							break
-						}
-					}
-
-					if linkEnd > 0 {
-						// 提取标题
-						title := cleanTitle(part[linkEnd:])
-						titles = append(titles, title)
-					}
-				}
-
-				// 将标题与链接关联
-				for i, link := range result.Links {
-					if i < len(titles) {
-						linkTitleMap[link.URL] = titles[i]
-					}
-				}
-			}
-		}
-
-		for _, link := range result.Links {
-			// 优先使用链接的WorkTitle字段，如果为空则回退到传统方式
-			rawTitle := result.Title
-
-			if link.WorkTitle != "" {
-				// 如果链接有WorkTitle字段，优先使用
-				rawTitle = link.WorkTitle
-			} else {
-				// 如果没有WorkTitle，使用传统方式从映射中获取该链接对应的标题
-				if specificTitle, found := linkTitleMap[link.URL]; found && specificTitle != "" {
-					rawTitle = specificTitle
-				} else {
-					// 如果没有找到完全匹配的链接，尝试查找前缀匹配的链接
-					for mappedLink, mappedTitle := range linkTitleMap {
-						if strings.HasPrefix(mappedLink, link.URL) {
-							rawTitle = mappedTitle
-							break
-						}
-					}
-				}
-			}
-
-			// 检查插件是否需要跳过Service层过滤
-			var skipKeywordFilter bool = false
-			if result.UniqueID != "" && strings.Contains(result.UniqueID, "-") {
-				parts := strings.SplitN(result.UniqueID, "-", 2)
-				if len(parts) >= 1 {
-					pluginName := parts[0]
-					if pluginInstance, exists := plugin.GetPluginByName(pluginName); exists {
-						skipKeywordFilter = pluginInstance.SkipServiceFilter()
-					}
-				}
-			}
-
-			// 关键词过滤
-			if !skipKeywordFilter && keyword != "" {
-				if !strings.Contains(strings.ToLower(rawTitle), lowerKeyword) {
-					continue
-				}
-			}
-
-			// 确定数据来源
-			var source string
-			if result.Channel != "" {
-				source = "tg:" + result.Channel
-			} else if result.UniqueID != "" && strings.Contains(result.UniqueID, "-") {
-				parts := strings.SplitN(result.UniqueID, "-", 2)
-				if len(parts) >= 1 {
-					source = "plugin:" + parts[0]
-				}
-			} else {
-				source = "unknown"
-			}
-
-			// 获取插件等级
-			pluginLevel := getPluginLevelBySource(source)
-
-			// 提取简洁的标题
-			cleanTitle := extractCleanTitle(rawTitle)
-
-			// 生成序号（从0001开始）
-			linkIndex++
-			serialNumber := fmt.Sprintf("%04d", linkIndex)
-
-			// 在标题前添加序号
-			titleWithSerial := fmt.Sprintf("%s %s", serialNumber, cleanTitle)
-
-			// 生成简洁的备注信息
-			compactNote := generateCompactNote(source, pluginLevel)
-
-			// 优先使用链接自己的时间，如果没有则使用搜索结果的时间
-			linkDatetime := result.Datetime
-			if !link.Datetime.IsZero() {
-				linkDatetime = link.Datetime
-			}
-
-			// 转换网盘类型为数字编码
-			linkTypeCode := convertLinkTypeToCode(link.Type)
-
-			// 创建兼容的链接
-			tvBoxLink := model.TVBoxCompatibleLink{
-				URL:      link.URL,
-				Password: link.Password,
-				Title:    titleWithSerial,
-				Note:     compactNote,
-				Datetime: linkDatetime,
-				Source:   source,
-				Images:   result.Images,
-				LinkType: linkTypeCode,
-			}
-
-			// 检查是否已存在相同URL的链接
-			if existingLink, exists := uniqueLinks[link.URL]; exists {
-				// 如果已存在，只有当当前链接的时间更新时才替换
-				if tvBoxLink.Datetime.After(existingLink.Datetime) {
-					uniqueLinks[link.URL] = tvBoxLink
-				}
-			} else {
-				// 如果不存在，直接添加
-				uniqueLinks[link.URL] = tvBoxLink
-			}
-		}
-	}
-
-	// 转换为有序列表
-	orderedLinks := make([]model.TVBoxCompatibleLink, 0, len(uniqueLinks))
-	for _, link := range uniqueLinks {
-		orderedLinks = append(orderedLinks, link)
-	}
-
-	// 如果指定了cloudTypes，则过滤结果
-	if len(cloudTypes) > 0 {
-		// 将cloudTypes转换为map以提高查找性能
-		allowedTypes := make(map[string]bool)
-		for _, cloudType := range cloudTypes {
-			allowedTypes[strings.ToLower(strings.TrimSpace(cloudType))] = true
-		}
-
-		// 只保留指定类型的链接
-		filteredLinks := make([]model.TVBoxCompatibleLink, 0)
-		for _, link := range orderedLinks {
-			if allowedTypes[strings.ToLower(link.LinkType)] {
-				filteredLinks = append(filteredLinks, link)
-			}
-		}
-
-		return filteredLinks
-	}
-
-	return orderedLinks
 }
 
 // searchTG 搜索TG频道
@@ -1804,14 +1480,11 @@ func (s *SearchService) GetPluginManager() *plugin.PluginManager {
 
 // ResultScore 搜索结果评分结构
 type ResultScore struct {
-	Result        model.SearchResult
-	TimeScore     float64 // 时间得分
-	KeywordScore  int     // 关键词得分
-	PluginScore   int     // 插件等级得分
-	QualityScore  float64 // 高清质量得分
-	PasswordScore int     // 提取码得分
-	TotalScore    float64 // 综合得分
-	Index         int     // 排序后的序号
+	Result       model.SearchResult
+	TimeScore    float64 // 时间得分
+	KeywordScore int     // 关键词得分
+	PluginScore  int     // 插件等级得分
+	TotalScore   float64 // 综合得分
 }
 
 // 插件等级缓存
@@ -1896,75 +1569,44 @@ func calculateTimeScore(datetime time.Time) float64 {
 	}
 
 	now := time.Now()
-	daysDiff := now.Sub(datetime).Hours() / 24
+	duration := now.Sub(datetime)
+	minutesDiff := duration.Minutes()
+	hoursDiff := duration.Hours()
+	daysDiff := hoursDiff / 24
 
-	// 时间得分：越新得分越高，最大500分（增加时间权重）
+	// 时间得分：越新得分越高
 	switch {
+	// 15分钟内
+	case minutesDiff <= 15:
+		return 3000
+	// 半小时内
+	case minutesDiff <= 30:
+		return 2000
+	// 1小时内
+	case hoursDiff <= 1:
+		return 1500
+	// 2小时内
+	case hoursDiff <= 2:
+		return 1000
+	// 1天内
 	case daysDiff <= 1:
-		return 500 // 1天内
+		return 500
+	// 3天内
 	case daysDiff <= 3:
-		return 400 // 3天内
+		return 400
+	// 1周内
 	case daysDiff <= 7:
-		return 300 // 1周内
+		return 300
+	// 1月内
 	case daysDiff <= 30:
-		return 200 // 1月内
+		return 200
+	// 3月内
 	case daysDiff <= 90:
-		return 100 // 3月内
+		return 100
+	// 1年内
 	case daysDiff <= 365:
-		return 50 // 1年内
+		return 50
 	default:
 		return 20 // 1年以上
 	}
-}
-
-// calculateQualityScore 计算高清质量得分
-func calculateQualityScore(title, content string) float64 {
-	combinedText := strings.ToLower(title + " " + content)
-
-	score := 0.0
-
-	// 检查高清质量关键词
-	for _, keyword := range qualityKeywords {
-		if strings.Contains(combinedText, strings.ToLower(keyword)) {
-			// 根据质量等级给分
-			switch keyword {
-			case "4K", "2160P":
-				score += 500 // 4K资源：500分
-			case "1080P":
-				score += 400 // 1080P：400分
-			case "720P":
-				score += 200 // 720P：200分
-			case "高清", "HD", "HDR", "杜比", "Dolby", "DTS":
-				score += 300 // 高清：300分
-			case "蓝光", "Blu-ray", "REMUX", "HEVC":
-				score += 450 // 蓝光：450分
-			case "TrueHD":
-				score += 350 // TrueHD：350分
-			default:
-				score += 250 // 其他质量标识：250分
-			}
-		}
-	}
-
-	return -50
-}
-
-// extractPasswordFromLinks 从链接列表中提取提取码
-func extractPasswordFromLinks(links []model.Link) string {
-	for _, link := range links {
-		if link.Password != "" {
-			return link.Password
-		}
-	}
-	return ""
-}
-
-// calculatePasswordScore 计算提取码得分
-func calculatePasswordScore(password string) int {
-	if password == "" {
-		return 100 // 无提取码：100分（一般不被和谐，视为优质）
-	}
-
-	// 有提取码：-50分（可能容易被和谐）
-	return -50
 }
