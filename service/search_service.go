@@ -1158,7 +1158,7 @@ func mergeResultsByType(results []model.SearchResult, keyword string, cloudTypes
 			sourceName := extractSourceName(source)
 
 			// 生成带排名、总分和来源的格式化标题
-			formattedTitle := fmt.Sprintf("%04d | %.0f | %s | %s", rank, totalScore, sourceName, title)
+			formattedTitle := fmt.Sprintf("%04d %.0f %s %s", rank, totalScore, sourceName, title)
 
 			mergedLink := model.MergedLink{
 				URL:      link.URL,
