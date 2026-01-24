@@ -578,6 +578,13 @@ func sortResultsByTimeAndKeywords(results []model.SearchResult) map[string]Resul
 	rankMap := make(map[string]ResultRankInfo)
 	for i, score := range scores {
 		results[i] = score.Result
+		// 提取来源名称
+		source := getResultSource(score.Result)
+		sourceName := extractSourceName(source)
+		// 生成格式化标题
+		formattedTitle := formatTitle(i+1, score.TotalScore, sourceName, score.Result.Title)
+		// 更新 SearchResult.Title
+		results[i].Title = formattedTitle
 		// 保存排名（从1开始）和总分
 		rankMap[score.Result.UniqueID] = ResultRankInfo{
 			Rank:       i + 1,
@@ -997,6 +1004,11 @@ func isEmpty(line string) bool {
 	return strings.TrimSpace(line) == ""
 }
 
+// formatTitle 统一处理标题格式化逻辑
+func formatTitle(rank int, totalScore float64, sourceName, title string) string {
+	return fmt.Sprintf("%04d %.0f %s %s", rank, totalScore, sourceName, title)
+}
+
 // extractSourceName 从来源字符串中提取实际的频道名或插件名
 func extractSourceName(source string) string {
 	parts := strings.Split(source, ":")
@@ -1158,7 +1170,7 @@ func mergeResultsByType(results []model.SearchResult, keyword string, cloudTypes
 			sourceName := extractSourceName(source)
 
 			// 生成带排名、总分和来源的格式化标题
-			formattedTitle := fmt.Sprintf("%04d %.0f %s %s", rank, totalScore, sourceName, title)
+			formattedTitle := formatTitle(rank, totalScore, sourceName, title)
 
 			mergedLink := model.MergedLink{
 				URL:      link.URL,
