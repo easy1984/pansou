@@ -60,7 +60,7 @@ docker-compose logs -f
 ##### 直接使用Docker命令
 
 ```bash
-docker run -d --name pansou -p 8888:8888 ghcr.io/fish2018/pansou:latest
+docker run -d --name pansou -p 9999:8888 ghcr.io/easy1984/pansou:latest
 ```
 
 ##### 使用Docker Compose（推荐）
